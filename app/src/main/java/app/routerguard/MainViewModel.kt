@@ -3,6 +3,7 @@ package app.routerguard
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import app.routerguard.data.AppSettings
 import app.routerguard.data.CredentialStore
 import app.routerguard.data.Credentials
 import app.routerguard.data.Device
@@ -10,6 +11,8 @@ import app.routerguard.data.DeviceStore
 import app.routerguard.data.Merge
 import app.routerguard.data.RouterClient
 import app.routerguard.data.RouterException
+import app.routerguard.data.Schedule
+import app.routerguard.data.Scheduler
 import app.routerguard.data.Snapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,12 +38,17 @@ data class UiState(
     val error: String? = null,
     val loginError: String? = null,
     val message: String? = null,
+    val theme: Int = 1,
+    val alerts: Boolean = false,
+    val intervalMin: Int = 30,
+    val schedules: List<Schedule> = emptyList(),
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val context = app.applicationContext
     private val store = DeviceStore(context)
     private val creds = CredentialStore(context)
+    private val settings = AppSettings(context)
 
     private val _state: MutableStateFlow<UiState>
     val state: StateFlow<UiState> get() = _state
@@ -53,8 +61,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 host = saved?.host ?: creds.lastHost(),
                 user = saved?.user ?: creds.lastUser(),
                 devices = if (saved != null) sorted(store.load()) else emptyList(),
+                theme = settings.theme,
+                alerts = settings.alerts,
+                intervalMin = settings.intervalMin,
+                schedules = settings.schedules,
             )
         )
+        Scheduler.sync(context)
         if (saved != null) refresh()
     }
 
@@ -126,6 +139,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setTheme(mode: Int) {
+        settings.theme = mode
+        _state.update { it.copy(theme = mode) }
+    }
+
+    fun setAlerts(on: Boolean) {
+        settings.alerts = on
+        _state.update { it.copy(alerts = on) }
+        Scheduler.sync(context)
+    }
+
+    fun setInterval(minutes: Int) {
+        settings.intervalMin = minutes
+        _state.update { it.copy(intervalMin = minutes) }
+        Scheduler.sync(context)
+    }
+
+    fun saveSchedule(s: Schedule) {
+        val list = settings.schedules.filter { it.mac != s.mac } + s
+        settings.schedules = list
+        _state.update { it.copy(schedules = list, message = "Schedule saved for ${s.name}. Checked every 15 minutes.") }
+        Scheduler.sync(context)
+    }
+
+    fun removeSchedule(mac: String) {
+        val list = settings.schedules.filter { it.mac != mac }
+        settings.schedules = list
+        _state.update { it.copy(schedules = list) }
+        Scheduler.sync(context)
+    }
+
+    fun toggleSchedule(mac: String, enabled: Boolean) {
+        val list = settings.schedules.map { if (it.mac == mac) it.copy(enabled = enabled) else it }
+        settings.schedules = list
+        _state.update { it.copy(schedules = list) }
+        Scheduler.sync(context)
+    }
+
     fun messageShown() = _state.update { it.copy(message = null) }
 
     // ---- helpers ----
@@ -160,7 +211,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private fun friendly(e: Throwable, host: String): String = when (e) {
         is RouterException -> e.message ?: "Router error."
         is SocketTimeoutException, is ConnectException, is UnknownHostException, is NoRouteToHostException ->
-            "Can't reach the router at $host. Make sure you're on your home Wi-Fi."
+            "Can't reach the router at $host. Check that you're on your home Wi-Fi. If you are, open Android Settings > Apps > Router Guard > Data usage and allow Wi-Fi (Xiaomi/Redmi phones can block new apps)."
         is IOException -> "Network problem: ${e.message}"
         else -> e.message ?: "Something went wrong."
     }

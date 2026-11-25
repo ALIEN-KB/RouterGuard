@@ -1,3 +1,5 @@
 <resources>
-    <style name="Theme.RouterGuard" parent="android:Theme.DeviceDefault.Light.NoActionBar" />
+    <style name="Theme.RouterGuard" parent="android:Theme.DeviceDefault.NoActionBar">
+        <item name="android:windowBackground">@color/app_bg</item>
+    </style>
 </resources>
