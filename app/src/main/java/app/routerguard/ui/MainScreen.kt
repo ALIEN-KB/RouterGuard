@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
@@ -69,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,19 +78,28 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.routerguard.MainViewModel
 import app.routerguard.UiState
+import app.routerguard.data.CredentialStore
 import app.routerguard.data.Device
 import app.routerguard.data.Schedule
 
 private enum class Filter(val label: String) { All("All"), Online("Online"), Blocked("Blocked"), Offline("Offline") }
 
-private val tabTitles = listOf("Devices", "Health", "Settings")
+private enum class Tab(val title: String) { Devices("Devices"), Router("Router"), Health("Health"), Settings("Settings") }
 
 @Composable
 fun AppRoot(vm: MainViewModel) {
     val state by vm.state.collectAsState()
-    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val tabs = remember(state.mode) {
+        if (state.mode == "huawei") Tab.entries.toList() else Tab.entries.filter { it != Tab.Devices }
+    }
+    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
+    val tab = tabs.getOrElse(tabIndex) { tabs.first() }
+    var routerOpened by remember { mutableStateOf(false) }
+    LaunchedEffect(tab) { if (tab == Tab.Router) routerOpened = true }
     val snackbar = remember { SnackbarHostState() }
     val scheme = MaterialTheme.colorScheme
+    val creds = remember(state.host, state.user) { CredentialStore(context).load() }
 
     LaunchedEffect(state.message) {
         state.message?.let {
@@ -105,8 +116,8 @@ fun AppRoot(vm: MainViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.background),
                 title = {
                     Column {
-                        Text(if (tab == 0) "Router Guard" else tabTitles[tab], fontWeight = FontWeight.Bold)
-                        if (tab == 0) {
+                        Text(if (tab == Tab.Devices) "Router Guard" else if (tab == Tab.Router) "Router page" else tab.title, fontWeight = FontWeight.Bold)
+                        if (tab == Tab.Devices) {
                             Text(
                                 if (state.loading) "Updating…" else if (state.lastRefresh > 0) "Updated ${ago(state.lastRefresh)}" else "",
                                 style = MaterialTheme.typography.labelSmall,
@@ -116,7 +127,7 @@ fun AppRoot(vm: MainViewModel) {
                     }
                 },
                 actions = {
-                    if (tab == 0) {
+                    if (tab == Tab.Devices) {
                         IconButton(onClick = vm::refresh, enabled = !state.loading) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh")
                         }
@@ -126,22 +137,42 @@ fun AppRoot(vm: MainViewModel) {
         },
         bottomBar = {
             NavigationBar(containerColor = scheme.surfaceContainer) {
-                val icons = listOf(Icons.Default.Home, Icons.Default.Favorite, Icons.Default.Settings)
-                tabTitles.forEachIndexed { i, title ->
+                tabs.forEachIndexed { i, t ->
+                    val icon = when (t) {
+                        Tab.Devices -> Icons.Default.Home
+                        Tab.Router -> Icons.Default.Build
+                        Tab.Health -> Icons.Default.Favorite
+                        Tab.Settings -> Icons.Default.Settings
+                    }
                     NavigationBarItem(
-                        selected = tab == i,
-                        onClick = { tab = i },
-                        icon = { Icon(icons[i], contentDescription = title) },
-                        label = { Text(title) },
+                        selected = tab == t,
+                        onClick = { tabIndex = i },
+                        icon = { Icon(icon, contentDescription = t.title) },
+                        label = { Text(t.title) },
                     )
                 }
             }
         },
     ) { pad ->
-        when (tab) {
-            0 -> DevicesTab(state, vm, pad)
-            1 -> HealthScreen(pad)
-            else -> SettingsScreen(state, vm, pad)
+        Box(Modifier.fillMaxSize()) {
+            when (tab) {
+                Tab.Devices -> DevicesTab(state, vm, pad)
+                Tab.Health -> HealthScreen(pad)
+                Tab.Settings -> SettingsScreen(state, vm, pad)
+                Tab.Router -> {}
+            }
+            // The router page stays loaded when you switch tabs, so its login and any recording survive.
+            // It is only created the first time you open the Router tab, so it never logs in behind your back.
+            if (routerOpened) {
+                Box(if (tab == Tab.Router) Modifier.fillMaxSize().padding(pad) else Modifier.size(0.dp)) {
+                    RouterWebScreen(
+                        host = state.host,
+                        user = creds?.user ?: state.user,
+                        password = creds?.password ?: "",
+                        visible = tab == Tab.Router,
+                    )
+                }
+            }
         }
     }
 }

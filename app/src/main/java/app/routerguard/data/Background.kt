@@ -56,7 +56,9 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val ctx = applicationContext
         val settings = AppSettings(ctx)
-        val creds = CredentialStore(ctx).load() ?: return@withContext Result.success()
+        val credStore = CredentialStore(ctx)
+        if (credStore.mode() != "huawei") return@withContext Result.success()
+        val creds = credStore.load() ?: return@withContext Result.success()
         val network = RouterClient.wifiNetwork(ctx) ?: return@withContext Result.success()
         val store = DeviceStore(ctx)
         val known = store.load()

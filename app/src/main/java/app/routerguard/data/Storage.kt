@@ -64,10 +64,13 @@ class CredentialStore(context: Context) {
         return Credentials(host, user, password)
     }
 
-    fun save(c: Credentials) {
+    fun save(c: Credentials, mode: String = "huawei") {
         prefs.edit().putString("host", c.host).putString("user", c.user)
-            .putString("password", encrypt(c.password)).apply()
+            .putString("password", encrypt(c.password)).putString("mode", mode).apply()
     }
+
+    /** "huawei" = full control through the HG8546M driver, "browser" = router page only. */
+    fun mode(): String = prefs.getString("mode", "huawei") ?: "huawei"
 
     fun clear() = prefs.edit().clear().apply()
 

@@ -38,6 +38,7 @@ data class UiState(
     val error: String? = null,
     val loginError: String? = null,
     val message: String? = null,
+    val mode: String = "huawei",
     val theme: Int = 1,
     val alerts: Boolean = false,
     val intervalMin: Int = 30,
@@ -61,6 +62,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 host = saved?.host ?: creds.lastHost(),
                 user = saved?.user ?: creds.lastUser(),
                 devices = if (saved != null) sorted(store.load()) else emptyList(),
+                mode = creds.mode(),
                 theme = settings.theme,
                 alerts = settings.alerts,
                 intervalMin = settings.intervalMin,
@@ -68,14 +70,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         )
         Scheduler.sync(context)
-        if (saved != null) refresh()
+        if (saved != null && creds.mode() == "huawei") refresh()
     }
 
     private val busy get() = _state.value.loading || _state.value.busyMac != null
 
     fun refresh() {
         val c = creds.load() ?: return
-        if (busy) return
+        if (busy || _state.value.mode != "huawei") return
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
@@ -88,7 +90,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshIfStale() {
         val s = _state.value
-        if (s.configured && !busy && System.currentTimeMillis() - s.lastRefresh > 45_000) refresh()
+        if (s.configured && s.mode == "huawei" && !busy && System.currentTimeMillis() - s.lastRefresh > 45_000) refresh()
     }
 
     fun connect(host: String, user: String, password: String) {
@@ -98,12 +100,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val snap = withContext(Dispatchers.IO) { talk(c) { snapshot() } }
-                creds.save(c)
-                _state.update { it.copy(configured = true, host = c.host, user = c.user) }
+                creds.save(c, "huawei")
+                _state.update { it.copy(configured = true, mode = "huawei", host = c.host, user = c.user) }
                 apply(snap)
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, loginError = friendly(e, c.host)) }
             }
+        }
+    }
+
+    /** Browser mode: no driver, just the router's own page (with optional auto-login). */
+    fun connectBrowser(host: String, user: String, password: String) {
+        val c = Credentials(host.trim(), user.trim(), password)
+        creds.save(c, "browser")
+        _state.update {
+            it.copy(configured = true, mode = "browser", host = c.host, user = c.user, loginError = null, devices = emptyList())
         }
     }
 
@@ -135,7 +146,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun signOut() {
         creds.clear()
         _state.update {
-            it.copy(configured = false, devices = emptyList(), error = null, loginError = null, loading = false)
+            it.copy(configured = false, mode = "huawei", devices = emptyList(), error = null, loginError = null, loading = false)
         }
     }
 

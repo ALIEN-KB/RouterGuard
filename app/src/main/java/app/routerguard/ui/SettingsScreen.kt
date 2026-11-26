@@ -54,7 +54,18 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
             }
         }
 
-        item {
+        if (state.mode != "huawei") {
+            item {
+                Section("Browser mode") {
+                    Text(
+                        "Your router is shown through its own web page. Device list, block/unblock, alerts and schedules need a driver for your router model. Open the Router tab, tap Record, block and unblock a device in the page, then share the recording so support can be added.",
+                        style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        if (state.mode == "huawei") item {
             Section("New-device alerts") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -89,7 +100,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
             }
         }
 
-        item {
+        if (state.mode == "huawei") item {
             Section("Block schedules") {
                 if (state.schedules.isEmpty()) {
                     Text(
@@ -134,7 +145,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
 
         item {
             Text(
-                "Router Guard 1.1 · for Huawei HG8546M",
+                "Router Guard 1.2",
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(8.dp),
             )

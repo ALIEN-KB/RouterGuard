@@ -21,3 +21,10 @@ Join your home Wi-Fi, open the app, enter the router address (192.168.100.1), us
 password. Pull down to refresh, tap a device for details/rename, press Block / Unblock.
 Close the router's web page in your browser first: the router allows one admin at a time.
 The app logs out of the router after every action so it never locks you out.
+
+## Other routers (browser mode)
+Pick "Other router" on the login screen. The app opens your router's own web page inside the
+app (with optional auto-login). Tap **Record**, log in, open the connected-devices page, block
+and unblock one device, then **Stop & review** and share the file. Passwords are removed and
+pages that look like Wi-Fi/account settings are left out. That recording is what a router
+driver is written from. Only plain-HTTP router pages can be recorded.

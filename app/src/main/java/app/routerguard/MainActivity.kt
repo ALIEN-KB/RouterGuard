@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
             }
             RouterGuardTheme(state.theme) {
                 if (!state.configured) {
-                    LoginScreen(state = state, onConnect = vm::connect)
+                    LoginScreen(state = state, onConnect = vm::connect, onBrowserMode = vm::connectBrowser)
                 } else {
                     AppRoot(vm)
                 }
