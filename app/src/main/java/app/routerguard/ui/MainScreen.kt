@@ -40,6 +40,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,6 +59,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -91,12 +93,12 @@ fun AppRoot(vm: MainViewModel) {
     val state by vm.state.collectAsState()
     val context = LocalContext.current
     val tabs = remember(state.mode) {
-        if (state.mode == "huawei") Tab.entries.toList() else Tab.entries.filter { it != Tab.Devices }
+        if (state.mode != "browser") Tab.entries.toList() else Tab.entries.filter { it != Tab.Devices }
     }
     var tabIndex by rememberSaveable { mutableIntStateOf(0) }
     val tab = tabs.getOrElse(tabIndex) { tabs.first() }
-    var routerOpened by remember { mutableStateOf(false) }
-    LaunchedEffect(tab) { if (tab == Tab.Router) routerOpened = true }
+    val routerController = remember { RouterController(context.applicationContext) }
+    DisposableEffect(Unit) { onDispose { routerController.release() } }
     val snackbar = remember { SnackbarHostState() }
     val scheme = MaterialTheme.colorScheme
     val creds = remember(state.host, state.user) { CredentialStore(context).load() }
@@ -155,22 +157,26 @@ fun AppRoot(vm: MainViewModel) {
         },
     ) { pad ->
         Box(Modifier.fillMaxSize()) {
-            when (tab) {
-                Tab.Devices -> DevicesTab(state, vm, pad)
-                Tab.Health -> HealthScreen(pad)
-                Tab.Settings -> SettingsScreen(state, vm, pad)
-                Tab.Router -> {}
-            }
-            // The router page stays loaded when you switch tabs, so its login and any recording survive.
-            // It is only created the first time you open the Router tab, so it never logs in behind your back.
-            if (routerOpened) {
-                Box(if (tab == Tab.Router) Modifier.fillMaxSize().padding(pad) else Modifier.size(0.dp)) {
-                    RouterWebScreen(
-                        host = state.host,
-                        user = creds?.user ?: state.user,
-                        password = creds?.password ?: "",
-                        visible = tab == Tab.Router,
-                    )
+            val guided = state.driverMissing || state.mode == "browser"
+            androidx.compose.animation.Crossfade(targetState = tab, label = "tabs") { t ->
+                when (t) {
+                    Tab.Devices ->
+                        if (state.driverMissing) DriverMissing(state.driverNotice ?: "", pad) { tabIndex = tabs.indexOf(Tab.Router) }
+                        else DevicesTab(state, vm, pad)
+                    Tab.Health -> HealthScreen(pad)
+                    Tab.Settings -> SettingsScreen(state, vm, pad)
+                    Tab.Router -> Column(Modifier.fillMaxSize().padding(pad)) {
+                        if (guided) SetupGuide()
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            RouterWebScreen(
+                                controller = routerController,
+                                host = state.host,
+                                user = creds?.user ?: state.user,
+                                password = creds?.password ?: "",
+                                visible = true,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -474,5 +480,52 @@ private fun Detail(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(120.dp))
         Text(value, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun DriverMissing(notice: String, pad: PaddingValues, onSetup: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxSize().padding(pad).padding(20.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.size(72.dp).clip(CircleShape).background(WarnAmber.copy(alpha = 0.18f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Build, null, tint = WarnAmber, modifier = Modifier.size(32.dp))
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("Driver needed", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        Text(notice, color = scheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onSetup, shape = RoundedCornerShape(16.dp)) { Text("Open guided setup") }
+    }
+}
+
+/** Short, always-visible checklist for teaching the app a router it has no driver for. */
+@Composable
+private fun SetupGuide() {
+    val scheme = MaterialTheme.colorScheme
+    val recording by app.routerguard.data.RecorderHub.recording.collectAsState()
+    val count by app.routerguard.data.RecorderHub.count.collectAsState()
+    var open by rememberSaveable { mutableStateOf(true) }
+    androidx.compose.material3.Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(16.dp),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = scheme.surfaceContainerHigh),
+        onClick = { open = !open },
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Guided setup", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(if (recording) "Recording: $count requests" else "Tap to ${if (open) "hide" else "show"}", style = MaterialTheme.typography.labelSmall, color = scheme.onSurfaceVariant)
+            }
+            if (open) {
+                Spacer(Modifier.height(6.dp))
+                listOf(
+                    "1. The page below signs in for you. If it doesn't, tap Auto-login.",
+                    "2. Tap Record.",
+                    "3. Open the list of connected devices, block one device you don't mind, then unblock it.",
+                    "4. Tap Stop recording, review, and share the file. Passwords are removed.",
+                ).forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant) }
+            }
+        }
     }
 }

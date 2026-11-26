@@ -28,3 +28,10 @@ app (with optional auto-login). Tap **Record**, log in, open the connected-devic
 and unblock one device, then **Stop & review** and share the file. Passwords are removed and
 pages that look like Wi-Fi/account settings are left out. That recording is what a router
 driver is written from. Only plain-HTTP router pages can be recorded.
+
+
+## Drivers (v1.3)
+
+Pick your router on the first screen. Huawei HG8xxx has a built-in, verified driver. Other routers listed
+there have **no driver yet**: choose one and the app starts a guided setup (opens the router page, signs in,
+records a short session you can share). See [docs/DRIVERS.md](docs/DRIVERS.md) for the driver format.

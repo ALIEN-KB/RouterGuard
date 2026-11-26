@@ -57,7 +57,7 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val ctx = applicationContext
         val settings = AppSettings(ctx)
         val credStore = CredentialStore(ctx)
-        if (credStore.mode() != "huawei") return@withContext Result.success()
+        if (credStore.mode() == "browser") return@withContext Result.success()
         val creds = credStore.load() ?: return@withContext Result.success()
         val network = RouterClient.wifiNetwork(ctx) ?: return@withContext Result.success()
         val store = DeviceStore(ctx)
@@ -68,7 +68,7 @@ class CheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(
         val owned = settings.scheduleOwned.toMutableSet()
 
         try {
-            val snap = RouterClient.session(RouterClient(creds.host, creds.user, creds.password, network)) {
+            val snap = RouterClient.session(app.routerguard.buildDriver(app.routerguard.data.DriverRegistry(ctx), app.routerguard.driverIdOf(credStore.mode()), creds, network)) {
                 var current = snapshot()
                 var changed = false
                 for (s in schedules) {

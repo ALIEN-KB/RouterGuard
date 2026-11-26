@@ -4,6 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.routerguard.data.AppSettings
+import app.routerguard.data.Catalog
+import app.routerguard.data.DriverRegistry
+import app.routerguard.data.DriverStatus
+import app.routerguard.data.RouterDriver
 import app.routerguard.data.CredentialStore
 import app.routerguard.data.Credentials
 import app.routerguard.data.Device
@@ -38,11 +42,14 @@ data class UiState(
     val error: String? = null,
     val loginError: String? = null,
     val message: String? = null,
-    val mode: String = "huawei",
+    val mode: String = Catalog.HUAWEI,
     val theme: Int = 1,
     val alerts: Boolean = false,
     val intervalMin: Int = 30,
     val schedules: List<Schedule> = emptyList(),
+    /** Plain-words result of the driver check, shown as a banner. Null when all is well. */
+    val driverNotice: String? = null,
+    val driverMissing: Boolean = false,
 )
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -50,6 +57,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val store = DeviceStore(context)
     private val creds = CredentialStore(context)
     private val settings = AppSettings(context)
+    private val registry = DriverRegistry(context)
 
     private val _state: MutableStateFlow<UiState>
     val state: StateFlow<UiState> get() = _state
@@ -70,14 +78,36 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         )
         Scheduler.sync(context)
-        if (saved != null && creds.mode() == "huawei") refresh()
+        if (saved != null && creds.mode() != "browser") {
+            checkDriver()
+            refresh()
+        }
+    }
+
+    /** Looks for the driver of the saved router, installs a bundled one, and tells the user what it found. */
+    fun checkDriver() {
+        val id = driverIdOf(creds.mode())
+        val name = Catalog.byDriver(id)?.let { "${it.brand} ${it.model.substringBefore(" (")}" } ?: "your router"
+        when (val st = registry.check(id)) {
+            DriverStatus.BuiltIn -> _state.update { it.copy(driverNotice = null, driverMissing = false) }
+            is DriverStatus.Ready -> _state.update { it.copy(driverNotice = null, driverMissing = false) }
+            is DriverStatus.JustInstalled -> _state.update {
+                it.copy(driverNotice = null, driverMissing = false, message = "Driver for $name installed (v${st.recipe.version}, ${st.recipe.status}).")
+            }
+            DriverStatus.Missing -> _state.update {
+                it.copy(driverMissing = true, driverNotice = "No driver is installed for $name yet. Open Router and run guided setup to teach the app this router.")
+            }
+            is DriverStatus.Broken -> _state.update {
+                it.copy(driverMissing = true, driverNotice = "The driver for $name could not be loaded: ${st.reason}")
+            }
+        }
     }
 
     private val busy get() = _state.value.loading || _state.value.busyMac != null
 
     fun refresh() {
         val c = creds.load() ?: return
-        if (busy || _state.value.mode != "huawei") return
+        if (busy || _state.value.mode == "browser" || _state.value.driverMissing) return
         _state.update { it.copy(loading = true, error = null) }
         viewModelScope.launch {
             try {
@@ -90,18 +120,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshIfStale() {
         val s = _state.value
-        if (s.configured && s.mode == "huawei" && !busy && System.currentTimeMillis() - s.lastRefresh > 45_000) refresh()
+        if (s.configured && s.mode != "browser" && !s.driverMissing && !busy && System.currentTimeMillis() - s.lastRefresh > 45_000) refresh()
     }
 
-    fun connect(host: String, user: String, password: String) {
+    fun connect(host: String, user: String, password: String, driverId: String = Catalog.HUAWEI) {
         if (busy) return
         val c = Credentials(host.trim(), user.trim(), password)
         _state.update { it.copy(loading = true, loginError = null) }
         viewModelScope.launch {
             try {
-                val snap = withContext(Dispatchers.IO) { talk(c) { snapshot() } }
-                creds.save(c, "huawei")
-                _state.update { it.copy(configured = true, mode = "huawei", host = c.host, user = c.user) }
+                val snap = withContext(Dispatchers.IO) { talk(c, driverId) { snapshot() } }
+                creds.save(c, driverId)
+                _state.update { it.copy(configured = true, mode = driverId, host = c.host, user = c.user, driverNotice = null, driverMissing = false) }
                 apply(snap)
             } catch (e: Exception) {
                 _state.update { it.copy(loading = false, loginError = friendly(e, c.host)) }
@@ -146,7 +176,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun signOut() {
         creds.clear()
         _state.update {
-            it.copy(configured = false, mode = "huawei", devices = emptyList(), error = null, loginError = null, loading = false)
+            it.copy(configured = false, mode = Catalog.HUAWEI, devices = emptyList(), error = null, driverNotice = null, driverMissing = false, loginError = null, loading = false)
         }
     }
 
@@ -192,10 +222,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- helpers ----
 
-    private fun <T> talk(c: Credentials, action: RouterClient.() -> T): T {
+    private fun <T> talk(c: Credentials, driverId: String = driverIdOf(creds.mode()), action: RouterDriver.() -> T): T {
         val network = RouterClient.wifiNetwork(context)
             ?: throw RouterException("You're not connected to Wi-Fi. Join your home Wi-Fi and try again.")
-        return RouterClient.session(RouterClient(c.host, c.user, c.password, network), action)
+        return RouterClient.session(buildDriver(registry, driverId, c, network), action)
     }
 
     private fun apply(snap: Snapshot, message: String? = null) {
@@ -233,4 +263,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 .thenByDescending { it.blocked }
                 .thenByDescending { it.lastSeen }
         )
+}
+
+/** Older versions saved "huawei" as the mode. */
+fun driverIdOf(mode: String): String = if (mode == "huawei") Catalog.HUAWEI else mode
+
+/** Creates the right driver: the built-in Huawei one, or one interpreted from an installed recipe. */
+fun buildDriver(registry: DriverRegistry, driverId: String, c: Credentials, network: android.net.Network?): RouterDriver {
+    if (driverId == Catalog.HUAWEI) return RouterClient(c.host, c.user, c.password, network)
+    return registry.create(registry.check(driverId), c.host, c.user, c.password, network)
+        ?: throw RouterException("No driver is installed for this router yet. Use guided setup in the Router tab.")
 }

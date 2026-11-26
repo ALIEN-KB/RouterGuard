@@ -24,7 +24,7 @@ class RouterClient(
     private val user: String,
     private val password: String,
     network: Network?,
-) {
+) : RouterDriver {
     private val base = "http://" + host.trim().removePrefix("http://").trimEnd('/')
     private val cookies = LinkedHashMap<String, String>()
     private var selfIpCache: String? = null
@@ -71,7 +71,7 @@ class RouterClient(
         http.newCall(rb.build()).execute().use { return it.body?.string() ?: "" }
     }
 
-    fun login() {
+    override fun login() {
         val page = call("/")
         val token = Parsing.loginToken(page)
             ?: throw RouterException("This doesn't look like the router's login page. Check the address.")
@@ -93,7 +93,7 @@ class RouterClient(
         }
     }
 
-    fun logout() {
+    override fun logout() {
         runCatching { call("/logout.cgi?RequestFile=html/logout.html", emptyMap()) }
         http.dispatcher.executorService.shutdown()
         http.connectionPool.evictAll()
@@ -128,22 +128,22 @@ class RouterClient(
         }
     }
 
-    fun block(mac: String, ssid: String) {
+    override fun block(mac: String, ssid: String) {
         change(
             "addajax",
             mutableMapOf("x.SSIDName" to ssid, "x.SourceMACAddress" to mac, "x.Enable" to "1"),
         )
     }
 
-    fun unblock(mac: String) {
+    override fun unblock(mac: String) {
         filterEntries().filter { it.mac == mac.lowercase() }.forEach { change("delajax", mutableMapOf(it.domain to "")) }
     }
 
-    fun snapshot(): Snapshot = Snapshot(devices(), filterEntries(), selfIp())
+    override fun snapshot(): Snapshot = Snapshot(devices(), filterEntries(), selfIp())
 
     companion object {
         /** Runs [action] logged in, and always logs out afterwards. */
-        fun <T> session(client: RouterClient, action: RouterClient.() -> T): T {
+        fun <D : RouterDriver, T> session(client: D, action: D.() -> T): T {
             client.login()
             try {
                 return client.action()

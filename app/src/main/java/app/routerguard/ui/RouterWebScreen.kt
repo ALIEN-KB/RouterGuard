@@ -66,60 +66,72 @@ import java.io.File
 import java.util.concurrent.Executor
 import javax.net.SocketFactory
 
-private class WebHolder {
-    var web: WebView? = null
-    var autoTried = false
-    @Volatile var ready = false
-}
+/** Owns the router WebView and its recording proxy, so they outlive tab switches. */
+class RouterController(private val context: Context) {
+    internal var web: WebView? = null
+    internal var autoTried = false
+    @Volatile internal var ready = false
+    internal var startUrl = ""
+    internal var note: String? = null
+    private var proxy: RecordingProxy? = null
+    private var proxied = false
 
-@SuppressLint("SetJavaScriptEnabled")
-@Composable
-fun RouterWebScreen(host: String, user: String, password: String, visible: Boolean) {
-    val context = LocalContext.current
-    val scheme = MaterialTheme.colorScheme
-    val holder = remember { WebHolder() }
-    val recording by RecorderHub.recording.collectAsState()
-    val count by RecorderHub.count.collectAsState()
-    var canGoBack by remember { mutableStateOf(false) }
-    var showGuide by remember { mutableStateOf(false) }
-    var showReview by remember { mutableStateOf(false) }
-    var note by remember { mutableStateOf<String?>(null) }
-
-    val cleanHost = host.trim().removePrefix("http://").removePrefix("https://").trimEnd('/')
-    val startUrl = if (host.trim().startsWith("https://")) "https://$cleanHost/" else "http://$cleanHost/"
-    val hostOnly = cleanHost.substringBefore('/').substringBefore(':')
-
-    // Everything the page does goes through a local proxy that is tied to Wi-Fi (so mobile data
-    // never gets in the way) and, while recording, writes down each request and response.
-    val proxy = remember {
-        val net = RouterClient.wifiNetwork(context)
-        RecordingProxy(net?.socketFactory ?: SocketFactory.getDefault(), { RecorderHub.recording.value }, RecorderHub::add)
-            .also { it.start() }
-    }
-
-    DisposableEffect(Unit) {
+    fun begin(url: String) {
+        if (proxy != null) return
+        startUrl = url
+        val p = RecordingProxy(
+            RouterClient.wifiNetwork(context)?.socketFactory ?: SocketFactory.getDefault(),
+            { RecorderHub.recording.value }, RecorderHub::add,
+        ).also { it.start() }
+        proxy = p
         val cm = context.getSystemService(ConnectivityManager::class.java)
-        var proxied = false
         if (WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
             ProxyController.getInstance().setProxyOverride(
-                ProxyConfig.Builder().addProxyRule("127.0.0.1:${proxy.port}").build(),
+                ProxyConfig.Builder().addProxyRule("127.0.0.1:${p.port}").build(),
                 Executor { it.run() },
-                Runnable { holder.ready = true; holder.web?.post { holder.web?.loadUrl(startUrl) } },
+                Runnable { ready = true; web?.post { web?.loadUrl(startUrl) } },
             )
             proxied = true
         } else {
             note = "This phone's WebView can't be recorded. The router page still works."
             cm?.bindProcessToNetwork(RouterClient.wifiNetwork(context))
-            holder.ready = true
-            holder.web?.post { holder.web?.loadUrl(startUrl) }
+            ready = true
+            web?.post { web?.loadUrl(startUrl) }
         }
-        onDispose {
-            if (proxied) ProxyController.getInstance().clearProxyOverride(Executor { it.run() }, Runnable { })
-            else cm?.bindProcessToNetwork(null)
-            proxy.stop()
-            RecorderHub.recording.value = false
-            holder.web?.destroy()
-        }
+    }
+
+    fun release() {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        if (proxied) ProxyController.getInstance().clearProxyOverride(Executor { it.run() }, Runnable { })
+        else if (proxy != null) cm?.bindProcessToNetwork(null)
+        proxy?.stop()
+        proxy = null
+        RecorderHub.recording.value = false
+        web?.destroy()
+        web = null
+    }
+}
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+fun RouterWebScreen(controller: RouterController, host: String, user: String, password: String, visible: Boolean) {
+    val scheme = MaterialTheme.colorScheme
+    val holder = controller
+    val recording by RecorderHub.recording.collectAsState()
+    val count by RecorderHub.count.collectAsState()
+    var canGoBack by remember { mutableStateOf(holder.web?.canGoBack() == true) }
+    var showGuide by remember { mutableStateOf(false) }
+    var showReview by remember { mutableStateOf(false) }
+    val note = holder.note
+    val context = LocalContext.current
+
+    val cleanHost = host.trim().removePrefix("http://").removePrefix("https://").trimEnd('/')
+    val startUrl = if (host.trim().startsWith("https://")) "https://$cleanHost/" else "http://$cleanHost/"
+    val hostOnly = cleanHost.substringBefore('/').substringBefore(':')
+
+    DisposableEffect(Unit) {
+        controller.begin(startUrl)
+        onDispose { }
     }
 
     BackHandler(enabled = visible && canGoBack) { holder.web?.goBack() }
@@ -156,9 +168,12 @@ fun RouterWebScreen(host: String, user: String, password: String, visible: Boole
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
-                    WebView(ctx).apply {
+                    val existing = holder.web
+                    (existing?.parent as? android.view.ViewGroup)?.removeView(existing)
+                    val fresh = existing == null
+                    (existing ?: WebView(ctx)).apply {
                         holder.web = this
-                        if (holder.ready) post { loadUrl(startUrl) }
+                        if (fresh && holder.ready) post { loadUrl(startUrl) }
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.useWideViewPort = true

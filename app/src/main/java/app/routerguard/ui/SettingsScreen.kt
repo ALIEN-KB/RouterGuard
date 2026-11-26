@@ -54,7 +54,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
             }
         }
 
-        if (state.mode != "huawei") {
+        if (state.mode == "browser") {
             item {
                 Section("Browser mode") {
                     Text(
@@ -65,7 +65,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
             }
         }
 
-        if (state.mode == "huawei") item {
+        if (state.mode != "browser") item {
             Section("New-device alerts") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -100,7 +100,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
             }
         }
 
-        if (state.mode == "huawei") item {
+        if (state.mode != "browser") item {
             Section("Block schedules") {
                 if (state.schedules.isEmpty()) {
                     Text(
@@ -128,6 +128,41 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
         }
 
         item {
+            val ctx = androidx.compose.ui.platform.LocalContext.current
+            val registry = androidx.compose.runtime.remember { app.routerguard.data.DriverRegistry(ctx) }
+            var installed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(registry.installedIds()) }
+            var note by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+            val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                if (uri != null) {
+                    note = runCatching {
+                        val text = ctx.contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+                        val r = registry.install(text)
+                        installed = registry.installedIds()
+                        "Installed driver \"${r.name}\" v${r.version}. Sign out and pick the router to use it."
+                    }.getOrElse { "Could not install: ${it.message}" }
+                }
+            }
+            Section("Drivers") {
+                Text(
+                    "Built in: Huawei HG8xxx (verified)." + if (installed.isEmpty()) "" else " Installed: ${installed.joinToString()}.",
+                    style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = { pick.launch(arrayOf("application/json", "text/plain", "*/*")) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+                    Text("Install a driver file")
+                }
+                if (note != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(note!!, style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                }
+                Text(
+                    "Drivers are plain data files. They can only talk to your router and cannot run code.",
+                    style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+
+        item {
             Section("Router") {
                 Text(state.host, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("Signed in as ${state.user}", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
@@ -145,7 +180,7 @@ fun SettingsScreen(state: UiState, vm: MainViewModel, pad: PaddingValues) {
 
         item {
             Text(
-                "Router Guard 1.2",
+                "Router Guard 1.3",
                 style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(8.dp),
             )

@@ -70,21 +70,18 @@ fun HealthScreen(pad: PaddingValues, vm: HealthViewModel = viewModel()) {
                 if (w == null) {
                     Text("Not connected to Wi-Fi.", color = scheme.onSurfaceVariant)
                 } else {
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text("${w.rssi}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
-                        Text(" dBm", Modifier.padding(bottom = 6.dp), color = scheme.onSurfaceVariant)
-                        Spacer(Modifier.weight(1f))
-                        Pill(w.band)
-                        Spacer(Modifier.width(6.dp))
-                        Pill(w.quality, qualityColor(w.quality))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SignalGauge(w.level, qualityColor(w.quality), "${w.rssi}", Modifier.size(112.dp))
+                        Spacer(Modifier.width(16.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Signal strength", style = MaterialTheme.typography.labelMedium, color = scheme.onSurfaceVariant)
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Pill(w.band)
+                                Pill(w.quality, qualityColor(w.quality))
+                            }
+                            Text("dBm, closer to 0 is stronger", style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant)
+                        }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    LinearProgressIndicator(
-                        progress = { w.level },
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                        color = qualityColor(w.quality),
-                        trackColor = scheme.surfaceContainerHighest,
-                    )
                     Spacer(Modifier.height(12.dp))
                     Row(Modifier.fillMaxWidth()) {
                         Stat("Link speed", "${w.linkMbps} Mbps", Modifier.weight(1f))
@@ -93,7 +90,7 @@ fun HealthScreen(pad: PaddingValues, vm: HealthViewModel = viewModel()) {
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Link speed is what your phone and router negotiate, not your internet speed. Your router only has 2.4 GHz Wi-Fi, so it tops out far below the internet plan.",
+                        "Link speed is what your phone and router negotiate, not your internet speed. On a 2.4 GHz-only router it tops out far below a fibre plan.",
                         style = MaterialTheme.typography.bodySmall, color = scheme.onSurfaceVariant,
                     )
                 }
@@ -259,4 +256,22 @@ private fun msColor(ms: Int, lossPct: Int, good: Int = 30, ok: Int = 80): Color 
     lossPct >= 10 || ms > ok -> MaterialTheme.colorScheme.error
     lossPct > 0 || ms > good -> WarnAmber
     else -> OnlineGreen
+}
+
+/** A ring that fills with signal level; the number sits in the middle. */
+@Composable
+private fun SignalGauge(level: Float, color: Color, label: String, modifier: Modifier = Modifier) {
+    val track = MaterialTheme.colorScheme.surfaceContainerHighest
+    val animated by androidx.compose.animation.core.animateFloatAsState(level.coerceIn(0f, 1f), label = "gauge")
+    Box(modifier, contentAlignment = Alignment.Center) {
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 12.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            val inset = 8.dp.toPx()
+            val sizePx = androidx.compose.ui.geometry.Size(size.width - inset * 2, size.height - inset * 2)
+            val topLeft = androidx.compose.ui.geometry.Offset(inset, inset)
+            drawArc(track, 135f, 270f, false, topLeft, sizePx, style = stroke)
+            drawArc(color, 135f, 270f * animated, false, topLeft, sizePx, style = stroke)
+        }
+        Text(label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+    }
 }
